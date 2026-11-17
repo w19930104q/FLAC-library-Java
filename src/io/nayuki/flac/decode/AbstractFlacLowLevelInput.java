@@ -28,55 +28,98 @@ import java.util.Objects;
 
 
 /**
- * A basic implementation of most functionality required by FlacLowLevelInpuut.
+ * A basic implementation of most functionality required by {@link FlacLowLevelInput}.
+ * <p>Subclasses only need to provide the mechanics of their underlying byte source:</p>
+ * <ul>
+ *   <li>{@link #getLength()} &ndash; the total number of bytes (or throw
+ *       {@link UnsupportedOperationException} if the length is unknown);</li>
+ *   <li>{@link #readUnderlying(byte[],int,int)} &ndash; read a chunk of bytes from the current position;</li>
+ *   <li>{@link #seekUnderlying(long)} &ndash; reposition the underlying byte source;</li>
+ *   <li>{@link #closeUnderlying()} &ndash; release any native resources (optional).</li>
+ * </ul>
+ * <p>All buffering, bit reading, position/bit-position accounting, CRC calculation,
+ * Rice decoding, and the seek and close lifecycle are handled uniformly by this class,
+ * so every implementation observes the same read and positioning contract.</p>
  */
 public abstract class AbstractFlacLowLevelInput implements FlacLowLevelInput {
-	
+
 	/*---- Fields ----*/
-	
+
 	// Data from the underlying stream is first stored into this byte buffer before further processing.
 	private long byteBufferStartPos;
 	private byte[] byteBuffer;
 	private int byteBufferLen;
 	private int byteBufferIndex;
-	
+
 	// The buffer of next bits to return to a reader. Note that byteBufferIndex is incremented when byte
 	// values are put into the bit buffer, but they might not have been consumed by the ultimate reader yet.
 	private long bitBuffer;  // Only the bottom bitBufferLen bits are valid; the top bits are garbage.
 	private int bitBufferLen;  // Always in the range [0, 64].
-	
+
 	// Current state of the CRC calculations.
 	private int crc8;  // Always a uint8 value.
 	private int crc16;  // Always a uint16 value.
 	private int crcStartIndex;  // In the range [0, byteBufferLen], unless byteBufferLen = -1.
+
+	// Whether close() has been called at least once.
+	private boolean closed;
 	
 	
 	
 	/*---- Constructors ----*/
-	
+
 	public AbstractFlacLowLevelInput() {
 		byteBuffer = new byte[4096];
+		closed = false;
 		positionChanged(0);
 	}
-	
-	
-	
+
+
+
 	/*---- Methods ----*/
-	
+
 	/*-- Stream position --*/
-	
+
+	// Returns the total number of bytes in the underlying byte source. The default implementation
+	// opts out by throwing UnsupportedOperationException; seekable subclasses must override it.
+	public long getLength() {
+		throw new UnsupportedOperationException("Stream length is unknown");
+	}
+
+
 	public long getPosition() {
 		return byteBufferStartPos + byteBufferIndex - (bitBufferLen + 7) / 8;
 	}
-	
-	
+
+
 	public int getBitPosition() {
 		return (-bitBufferLen) & 7;
 	}
-	
-	
-	// When a subclass handles seekTo() and didn't throw UnsupportedOperationException,
-	// it must call this method to flush the buffers of upcoming data.
+
+
+	// Repositions this stream to the given byte offset. This template method is shared by
+	// every subclass: it validates the argument and the lifecycle state, delegates the actual
+	// repositioning of the underlying byte source to seekUnderlying(), and then flushes all
+	// buffered data through positionChanged() so that position, bit position, and CRCs are
+	// reset uniformly. Subclasses must not override this; they implement seekUnderlying() instead.
+	public void seekTo(long pos) throws IOException {
+		if (closed)
+			throw new IllegalStateException("Stream is already closed");
+		if (pos < 0)
+			throw new IllegalArgumentException("Non-negative position required: " + pos);
+		seekUnderlying(pos);
+		positionChanged(pos);
+	}
+
+
+	// Repositions the underlying byte source so that its next read starts at the given
+	// non-negative byte offset. Called only by seekTo(), after all state checks have passed.
+	protected abstract void seekUnderlying(long pos) throws IOException;
+
+
+	// Flushes every buffer of upcoming data and resets the position, bit position, and CRCs to
+	// reflect that the underlying byte source now starts at the given byte offset. This is called
+	// from the constructor and from seekTo(); subclasses normally do not need to call it directly.
 	protected void positionChanged(long pos) {
 		byteBufferStartPos = pos;
 		Arrays.fill(byteBuffer, (byte)0);  // Defensive clearing, should have no visible effect outside of debugging
@@ -239,6 +282,8 @@ public abstract class AbstractFlacLowLevelInput implements FlacLowLevelInput {
 	
 	
 	// Reads up to 'len' bytes from the underlying byte-based input stream into the given array subrange.
+	// The read starts at this stream's current position; subclasses are responsible for keeping
+	// their underlying byte source's cursor where the previous read or seek left it.
 	// Returns a value in the range [0, len] for a successful read, or -1 if the end of stream was reached.
 	protected abstract int readUnderlying(byte[] buf, int off, int len) throws IOException;
 	
@@ -286,10 +331,15 @@ public abstract class AbstractFlacLowLevelInput implements FlacLowLevelInput {
 	
 	
 	/*-- Miscellaneous --*/
-	
-	// Note: This class only uses memory and has no native resources. It's not strictly necessary to
-	// call the implementation of AbstractFlacLowLevelInput.close() here, but it's a good habit anyway.
-	public void close() throws IOException {
+
+	// Closes the stream exactly once regardless of how many times this method is invoked.
+	// The idempotency guard and all buffer invalidation live here; a subclass only releases
+	// its own native resources by overriding closeUnderlying(), and never overrides close().
+	public final void close() throws IOException {
+		if (closed)
+			return;
+		closed = true;
+		closeUnderlying();
 		byteBuffer = null;
 		byteBufferLen = -1;
 		byteBufferIndex = -1;
@@ -299,6 +349,11 @@ public abstract class AbstractFlacLowLevelInput implements FlacLowLevelInput {
 		crc16 = -1;
 		crcStartIndex = -1;
 	}
+
+
+	// Releases native resources held by the underlying byte source. Called at most once, from close().
+	// The default implementation does nothing, which is sufficient for purely in-memory byte sources.
+	protected void closeUnderlying() throws IOException {}
 	
 	
 	

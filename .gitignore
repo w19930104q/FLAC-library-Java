@@ -1,0 +1,5 @@
+# Build output
+/build/
+
+# Locally downloaded JDK toolchain (not part of the project)
+/tools/

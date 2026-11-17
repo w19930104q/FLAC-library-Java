@@ -55,9 +55,11 @@ public interface FlacLowLevelInput extends AutoCloseable {
 	
 	
 	// Changes the position of the next read to the given byte offset from the start of the stream.
-	// This also resets CRCs and sets the bit position to 0.
+	// This also resets CRCs and sets the bit position to 0. The position must be non-negative;
+	// seeking to or beyond the end of the stream is permitted, and makes subsequent reads report EOF.
 	// Implementing this is optional; it is intended to support playback seeking.
 	// A class may choose to throw UnsupportedOperationException instead.
+	// @throws IllegalArgumentException if the position is negative
 	public void seekTo(long pos) throws IOException;
 	
 	

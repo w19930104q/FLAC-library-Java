@@ -29,6 +29,9 @@ import java.util.Objects;
 
 /**
  * A FLAC input stream based on a {@link RandomAccessFile}.
+ * <p>All read, position, seek, CRC, and close semantics are provided by
+ * {@link AbstractFlacLowLevelInput}; this class only supplies the mechanics
+ * of reading, repositioning, and closing the backing random-access file.</p>
  */
 public final class SeekableFileFlacInput extends AbstractFlacLowLevelInput {
 	
@@ -44,7 +47,7 @@ public final class SeekableFileFlacInput extends AbstractFlacLowLevelInput {
 	public SeekableFileFlacInput(File file) throws IOException {
 		super();
 		Objects.requireNonNull(file);
-		this.raf = new RandomAccessFile(file, "r");
+		raf = new RandomAccessFile(file, "r");
 	}
 	
 	
@@ -60,9 +63,8 @@ public final class SeekableFileFlacInput extends AbstractFlacLowLevelInput {
 	}
 	
 	
-	public void seekTo(long pos) throws IOException {
+	protected void seekUnderlying(long pos) throws IOException {
 		raf.seek(pos);
-		positionChanged(pos);
 	}
 	
 	
@@ -72,12 +74,8 @@ public final class SeekableFileFlacInput extends AbstractFlacLowLevelInput {
 	
 	
 	// Closes the underlying RandomAccessFile stream (very important).
-	public void close() throws IOException {
-		if (raf != null) {
-			raf.close();
-			raf = null;
-			super.close();
-		}
+	protected void closeUnderlying() throws IOException {
+		raf.close();
 	}
 	
 }
